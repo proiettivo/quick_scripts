@@ -1,6 +1,7 @@
 import numpy as np
 from tqdm import tqdm
 import os, pickle
+import sys
 
 relu = np.vectorize(lambda x: max(x, 0))
 
@@ -10,6 +11,31 @@ def count_occ(v, lb, ub, r_include=False):
     s = v <= ub if r_include else v < ub
     return (g & s).sum()
 
+
+EMPTY_SPACE = "|_"
+FULL_SPACE = "|X"
+YOU_LOST = "YOU LOST!\n"
+YOU_WON = "YOU WON!\n"
+
+
+def getRepr(pos, is_left, tot_pos, of, otf):
+    repr = "LOSE" if is_left else "WIN"
+    for i in range(tot_pos):
+        repr = repr + (FULL_SPACE if i == (pos-1) else EMPTY_SPACE)
+
+    if pos == 1:
+        if is_left:
+            repr = YOU_LOST + repr
+        else:
+            repr = YOU_WON + repr
+    elif pos == tot_pos:
+        if not is_left:
+            repr = YOU_LOST + repr
+        else:
+            repr = YOU_WON + repr
+
+    funds = "\n Your Funds: {}, Their Funds: {}".format(of, otf)
+    return repr + ("|WIN" if is_left else "|LOSE") + funds
 
 class WeightFactory:
 
@@ -95,6 +121,24 @@ class Player:
     def reason(self):
         pass
 
+
+class InteractivePlayer(Player):
+
+    def investment(self, pos, own_funds, other_funds):
+        print(getRepr(pos, self.is_left, self.tot_pos, own_funds, other_funds))
+        return super().investment(pos, own_funds, other_funds)
+
+    def reason(self):
+        inv_str = input("Your next move, invest between 0 and {}:\n".format(self.own_funds)).replace(",", ".")
+
+        inv = float(inv_str) if (inv_str.split(".", 1)[0].isnumeric() and inv_str.split(".", 1)[1].isnumeric()) else 0
+
+        if inv > self.own_funds:
+            print("You can invest {} at most! You are investing all.\n".format(self.own_funds))
+        elif inv < 0:
+            print("You cannot invest less than 0! You are investing nothing.\n")
+
+        return inv
 
 class RandomPlayer(Player):
 
@@ -197,6 +241,7 @@ if __name__ == "__main__":
     wf = WeightFactory(5, 1, [32, 32])
 
     generation = [wf.get_random_weights() for i in range(gen_size)]
+    best_player_weights = None
 
     for gen in range(max_generations):
         points = np.zeros(gen_size)
@@ -224,7 +269,7 @@ if __name__ == "__main__":
                 points[i] = points[i] + res[0]
                 points[k] = points[k] + res[1]
 
-        points_2_prob = (points + points_vs_random) / (points_vs_random + points.sum())
+        points_2_prob = (points + points_vs_random) / (points_vs_random.sum() + points.sum())
         pos_best = points_2_prob.argmax()
 
         print("Generation {}, best nr: {}, 1st move: {}, avg pts: {}, avg vs rnd: {}".format(gen, pos_best,
@@ -244,7 +289,8 @@ if __name__ == "__main__":
 
         if gen == max_generations-1:
             save_path = os.path.join(os.getcwd(), "best.p")
-            pickle.dump(generation[pos_best], open(save_path, "wb"))
+            best_player_weights = generation[pos_best]
+            pickle.dump(best_player_weights, open(save_path, "wb"))
         else:
             cdf = points_2_prob.cumsum()
             pos = np.array(range(gen_size))
@@ -259,5 +305,23 @@ if __name__ == "__main__":
 
             generation = new_generation
 
+    print("We have just finished training our AI champion!")
+
+    def interactive_vs_best(first=True, iter=0, bpw=None):
+        chal = input("Do you want to challenge the champion?\n" if first else "Again?\n")
+        if (chal.upper() in ["Y", "YES"]) or (chal.isnumeric() and bool(int(chal) > 0)):
+            player = InteractivePlayer(1, start_pos, tot_pos, l_wins_draws)
+            best_player = WisePlayer(0, start_pos, tot_pos, r_wins_draws, bpw)
+            game = GameOfStrangeRisk(start_pos, tot_pos, player, best_player, 0)
+            game_result = game.play_game()
+            print(getRepr(game.pos, 1, game.tot_pos, game.lpf, game.rpf))
+            next_game_result = interactive_vs_best(first=False, iter=iter, bpw=bpw)
+            return [game_result[0]+next_game_result[0], game_result[1]+next_game_result[1], next_game_result[2]+1]
+        else:
+            return [0, 0, iter]
+
+    res = interactive_vs_best(bpw=best_player_weights)
+    if res[2] > 0:
+        print("Final result, YOU: {}, AI: {} in {} games".format(res[0], res[1], res[2]))
 
 
